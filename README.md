@@ -4,6 +4,12 @@ Source-level fixes for building LineageOS 17.1 (Android 10) for the Samsung Gala
 
 Most boot-critical fixes are not in the device tree. They are changes to AOSP/Lineage projects (`build/make`, `frameworks/av`, `hardware/interfaces`, `system/core`, ...). `repo sync` or `git checkout -- .` removes them, so they are kept here as patches.
 
+## Status
+
+Extracted from a working LineageOS 17.1 build (October 2026).
+Not re-verified from a clean tree. If a patch fails to apply or the
+build breaks, please open an issue.
+
 ## Contents
 
 - `patches/`: one `git diff` patch per modified project
