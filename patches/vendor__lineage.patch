@@ -1,0 +1,59 @@
+diff --git a/build/soong/Android.bp b/build/soong/Android.bp
+index 0a2b968..033fdc1 100644
+--- a/build/soong/Android.bp
++++ b/build/soong/Android.bp
+@@ -26,8 +26,11 @@ bootstrap_go_package {
+ lineage_generator {
+     name: "generated_kernel_includes",
+ 
+-    // The headers make command
+-    cmd: "$(PATH_OVERRIDE_SOONG) $(KERNEL_MAKE_CMD) $(KERNEL_MAKE_FLAGS) -C $(TARGET_KERNEL_SOURCE) O=$(KERNEL_BUILD_OUT_PREFIX)$(genDir) ARCH=$(KERNEL_ARCH) $(KERNEL_CROSS_COMPILE) headers_install",
++    // a2corelte prebuilt kernel kullanir (TARGET_PREBUILT_KERNEL); agacta
++    // kernel/samsung/exynos7870 kaynagi yok. headers_install calistirilamaz.
++    // PATH_OVERRIDE_SOONG / KERNEL_MAKE_CMD / KERNEL_BUILD_OUT_PREFIX
++    // de A10'da tanimsiz. Generator yalnizca dizin yapisini olusturur.
++    cmd: "mkdir -p usr/audio/include/uapi usr/include usr/include/audio/include/uapi usr/techpack/audio/include",
+ 
+     // Directories that can be imported by a cc_* module generated_headers property
+     export_include_dirs: [
+@@ -36,10 +39,6 @@ lineage_generator {
+         "usr/include/audio/include/uapi",
+         "usr/techpack/audio/include"
+     ],
+-
+-    // Sources for dependency tracking
+-    dep_root: "$(TARGET_KERNEL_SOURCE)",
+-    dep_files: [ "Makefile", "include/**/*", "arch/$(KERNEL_ARCH)/include/**/*", "techpack/audio/include/**/*"],
+ }
+ 
+ cc_library_headers {
+diff --git a/config/common.mk b/config/common.mk
+index 2cab1ea..1c15656 100644
+--- a/config/common.mk
++++ b/config/common.mk
+@@ -13,18 +13,14 @@ PRODUCT_SYSTEM_DEFAULT_PROPERTIES += \
+     ro.com.google.clientidbase=$(PRODUCT_GMS_CLIENTID_BASE)
+ endif
+ 
+-ifeq ($(TARGET_BUILD_VARIANT),eng)
+-# Disable ADB authentication
++# a2corelte: bu resmi olmayan userdebug build'i ekranda onay penceresi
++# acilamadigi icin ADB kimlik dogrulamasi her zaman kapatilir. Cihaz siyah
++# ekranda kalinca "Allow USB debugging?" diyalogu gorunemedigi ic
++# unauthorized durumunda kilitleniyor ve shell/logcat alinamiyordu.
++# Not: FINAL_DEFAULT_PROPERTIES uniq-pairs-by-first-component ile
++# sadestirildigi icin deger burada verilmelidir; device.mk'ye yazilan
++# PRODUCT_SYSTEM_DEFAULT_PROPERTIES daha sonra geldigi icin yenilmiyordu.
+ PRODUCT_SYSTEM_DEFAULT_PROPERTIES += ro.adb.secure=0
+-else
+-ifdef WITH_ADB_INSECURE
+-# Forcebly disable ADB authentication
+-PRODUCT_SYSTEM_DEFAULT_PROPERTIES += ro.adb.secure=0
+-else
+-# Enable ADB authentication
+-PRODUCT_SYSTEM_DEFAULT_PROPERTIES += ro.adb.secure=1
+-endif
+-endif
+ 
+ # Backup Tool
+ PRODUCT_COPY_FILES += \

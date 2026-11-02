@@ -1,0 +1,90 @@
+diff --git a/src/java/com/android/internal/telephony/RIL.java b/src/java/com/android/internal/telephony/RIL.java
+index 83398b6..0e59ba5 100644
+--- a/src/java/com/android/internal/telephony/RIL.java
++++ b/src/java/com/android/internal/telephony/RIL.java
+@@ -436,7 +436,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
+             } else {
+                 try {
+                     mRadioProxy = android.hardware.radio.V1_4.IRadio.getService(
+-                            HIDL_SERVICE_NAME[mPhoneId], true);
++                            HIDL_SERVICE_NAME[mPhoneId], false);
+                     mRadioVersion = RADIO_HAL_VERSION_1_4;
+                 } catch (NoSuchElementException e) {
+                 }
+@@ -444,7 +444,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
+                 if (mRadioProxy == null) {
+                     try {
+                         mRadioProxy = android.hardware.radio.V1_3.IRadio.getService(
+-                                HIDL_SERVICE_NAME[mPhoneId], true);
++                                HIDL_SERVICE_NAME[mPhoneId], false);
+                         mRadioVersion = RADIO_HAL_VERSION_1_3;
+                     } catch (NoSuchElementException e) {
+                     }
+@@ -453,7 +453,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
+                 if (mRadioProxy == null) {
+                     try {
+                         mRadioProxy = android.hardware.radio.V1_2.IRadio.getService(
+-                                HIDL_SERVICE_NAME[mPhoneId], true);
++                                HIDL_SERVICE_NAME[mPhoneId], false);
+                         mRadioVersion = RADIO_HAL_VERSION_1_2;
+                     } catch (NoSuchElementException e) {
+                     }
+@@ -462,7 +462,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
+                 if (mRadioProxy == null) {
+                     try {
+                         mRadioProxy = android.hardware.radio.V1_1.IRadio.getService(
+-                                HIDL_SERVICE_NAME[mPhoneId], true);
++                                HIDL_SERVICE_NAME[mPhoneId], false);
+                         mRadioVersion = RADIO_HAL_VERSION_1_1;
+                     } catch (NoSuchElementException e) {
+                     }
+@@ -471,7 +471,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
+                 if (mRadioProxy == null) {
+                     try {
+                         mRadioProxy = android.hardware.radio.V1_0.IRadio.getService(
+-                                HIDL_SERVICE_NAME[mPhoneId], true);
++                                HIDL_SERVICE_NAME[mPhoneId], false);
+                         mRadioVersion = RADIO_HAL_VERSION_1_0;
+                     } catch (NoSuchElementException e) {
+                     }
+@@ -482,9 +482,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
+                             mRadioProxyCookie.incrementAndGet());
+                     mRadioProxy.setResponseFunctions(mRadioResponse, mRadioIndication);
+                 } else {
+-                    mDisabledRadioServices.add(mPhoneId);
+                     riljLoge("getRadioProxy: mRadioProxy for "
+-                            + HIDL_SERVICE_NAME[mPhoneId] + " is disabled");
++                            + HIDL_SERVICE_NAME[mPhoneId] + " not available yet, retrying");
+                 }
+             }
+         } catch (RemoteException e) {
+@@ -493,7 +492,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
+         }
+ 
+         if (mRadioProxy == null) {
+-            // getService() is a blocking call, so this should never happen
+             riljLoge("getRadioProxy: mRadioProxy == null");
+             if (result != null) {
+                 AsyncResult.forMessage(result, null,
+diff --git a/src/java/com/android/internal/telephony/RadioConfig.java b/src/java/com/android/internal/telephony/RadioConfig.java
+index a2d4e5b..ed15714 100644
+--- a/src/java/com/android/internal/telephony/RadioConfig.java
++++ b/src/java/com/android/internal/telephony/RadioConfig.java
+@@ -197,7 +197,7 @@ public class RadioConfig extends Handler {
+             // Try to get service from different versions.
+             try {
+                 mRadioConfigProxy = android.hardware.radio.config.V1_1.IRadioConfig.getService(
+-                        true);
++                        false);
+                 mRadioConfigVersion = RADIO_CONFIG_HAL_VERSION_1_1;
+             } catch (NoSuchElementException e) {
+             }
+@@ -205,7 +205,7 @@ public class RadioConfig extends Handler {
+             if (mRadioConfigProxy == null) {
+                 try {
+                     mRadioConfigProxy = android.hardware.radio.config.V1_0
+-                            .IRadioConfig.getService(true);
++                            .IRadioConfig.getService(false);
+                     mRadioConfigVersion = RADIO_CONFIG_HAL_VERSION_1_0;
+                 } catch (NoSuchElementException e) {
+                 }

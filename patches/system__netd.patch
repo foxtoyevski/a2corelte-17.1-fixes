@@ -1,0 +1,32 @@
+diff --git a/server/main.cpp b/server/main.cpp
+index b783ce5..f2741b8 100644
+--- a/server/main.cpp
++++ b/server/main.cpp
+@@ -37,6 +37,8 @@
+ #include <binder/IServiceManager.h>
+ #include <netdutils/Stopwatch.h>
+ 
++#include "bpf/BpfUtils.h"
++
+ #include "Controllers.h"
+ #include "FwmarkServer.h"
+ #include "MDnsSdListener.h"
+@@ -111,10 +113,14 @@ int main() {
+     // Before we start any threads, populate the resolver stub pointers.
+     resolv_stub_init();
+ 
+-    // Make sure BPF programs are loaded before doing anything
+-    while (!android::base::WaitForProperty("bpf.progs_loaded", "1",
+-           std::chrono::seconds(5))) {
+-        ALOGD("netd waited 5s for bpf.progs_loaded, still waiting...");
++    // Make sure BPF programs are loaded before doing anything. On kernels without eBPF
++    // (e.g. old Exynos 3.10), the BPF loader never publishes bpf.progs_loaded, so waiting
++    // here would hang netd forever and stall the framework (which binds netd at boot).
++    if (android::bpf::getBpfSupportLevel() != android::bpf::BpfLevel::NONE) {
++        while (!android::base::WaitForProperty("bpf.progs_loaded", "1",
++               std::chrono::seconds(5))) {
++            ALOGD("netd waited 5s for bpf.progs_loaded, still waiting...");
++        }
+     }
+ 
+     NetlinkManager *nm = NetlinkManager::Instance();

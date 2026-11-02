@@ -1,0 +1,24 @@
+diff --git a/services/audiopolicy/engine/common/src/EngineBase.cpp b/services/audiopolicy/engine/common/src/EngineBase.cpp
+index 07a7e65..857b1d5 100644
+--- a/services/audiopolicy/engine/common/src/EngineBase.cpp
++++ b/services/audiopolicy/engine/common/src/EngineBase.cpp
+@@ -103,8 +103,17 @@ engineConfig::ParsingResult EngineBase::loadAudioPolicyEngineConfig()
+                 const auto &iter = std::find_if(begin(volumeGroups), end(volumeGroups),
+                                          [&group](const auto &volumeGroup) {
+                         return group.volumeGroup == volumeGroup.second->getName(); });
+-                ALOG_ASSERT(iter != end(volumeGroups), "Invalid Volume Group Name %s",
+-                            group.volumeGroup.c_str());
++                if (iter == end(volumeGroups)) {
++                    // Not: ALOG_ASSERT burada derlenmedigi icin (NDEBUG) bulunamayan
++                    // volumeGroup sessizce end() uzerinden null dereference ile
++                    // audioserver'i SIGSEGV ile dusuruyordu; bu da
++                    // media.audio_policy'nin hic kaydedilmemesine ve
++                    // AudioService.<init>'in sonsuza kadar beklemesine yol
++                    // aciyordu (boot dongusu). Grubu atlayip sistemi ayakta tut.
++                    ALOGE("%s: Invalid Volume Group Name %s", __FUNCTION__,
++                          group.volumeGroup.c_str());
++                    continue;
++                }
+                 if (group.stream != AUDIO_STREAM_DEFAULT) {
+                     iter->second->addSupportedStream(group.stream);
+                 }

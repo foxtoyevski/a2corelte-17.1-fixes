@@ -1,0 +1,20 @@
+diff --git a/apexer/apexer.py b/apexer/apexer.py
+index e57e269..c3f7edb 100644
+--- a/apexer/apexer.py
++++ b/apexer/apexer.py
+@@ -254,7 +254,14 @@ def CreateApex(args, work_dir):
+     cmd.extend(['-E', 'hash_seed=' + uu])
+     cmd.append(img_file)
+     cmd.append(str(size_in_mb) + 'M')
+-    RunCommand(cmd, args.verbose, {"E2FSPROGS_FAKE_TIME": "1"})
++    # Use the AOSP-provided mke2fs.conf instead of the host's /etc/mke2fs.conf,
++    # since the bundled e2fsprogs may not know features the host enables.
++    mke2fs_env = {"E2FSPROGS_FAKE_TIME": "1"}
++    mke2fs_conf = os.environ.get(
++        'MKE2FS_CONF', 'system/extras/ext4_utils/mke2fs.conf')
++    if os.path.exists(mke2fs_conf):
++      mke2fs_env["MKE2FS_CONFIG"] = os.path.realpath(mke2fs_conf)
++    RunCommand(cmd, args.verbose, mke2fs_env)
+ 
+     # Compile the file context into the binary form
+     compiled_file_contexts = os.path.join(work_dir, 'file_contexts.bin')

@@ -1,0 +1,90 @@
+diff --git a/packages/SettingsLib/src/com/android/settingslib/deviceinfo/AbstractWifiMacAddressPreferenceController.java b/packages/SettingsLib/src/com/android/settingslib/deviceinfo/AbstractWifiMacAddressPreferenceController.java
+index 71778215..bbd1032e 100644
+--- a/packages/SettingsLib/src/com/android/settingslib/deviceinfo/AbstractWifiMacAddressPreferenceController.java
++++ b/packages/SettingsLib/src/com/android/settingslib/deviceinfo/AbstractWifiMacAddressPreferenceController.java
+@@ -58,7 +58,7 @@ public abstract class AbstractWifiMacAddressPreferenceController
+ 
+     @Override
+     public boolean isAvailable() {
+-        return true;
++        return mWifiManager != null;
+     }
+ 
+     @Override
+@@ -81,6 +81,9 @@ public abstract class AbstractWifiMacAddressPreferenceController
+     @SuppressLint("HardwareIds")
+     @Override
+     protected void updateConnectivity() {
++        if (mWifiManager == null || mWifiMacAddress == null) {
++            return;
++        }
+         final String[] macAddresses = mWifiManager.getFactoryMacAddresses();
+         String macAddress = null;
+         if (macAddresses != null && macAddresses.length > 0) {
+diff --git a/services/core/java/com/android/server/NetworkManagementService.java b/services/core/java/com/android/server/NetworkManagementService.java
+index 76379bfc..1b6c19db 100644
+--- a/services/core/java/com/android/server/NetworkManagementService.java
++++ b/services/core/java/com/android/server/NetworkManagementService.java
+@@ -163,7 +163,7 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
+ 
+     private final SystemServices mServices;
+ 
+-    private INetd mNetdService;
++    private volatile INetd mNetdService;
+ 
+     private final NetdUnsolicitedEventListener mNetdUnsolicitedEventListener;
+ 
+@@ -631,13 +631,22 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
+     }
+ 
+     private void connectNativeNetdService() {
+-        mNetdService = mServices.getNetd();
+-        try {
+-            mNetdService.registerUnsolicitedEventListener(mNetdUnsolicitedEventListener);
+-            if (DBG) Slog.d(TAG, "Register unsolicited event listener");
+-        } catch (RemoteException | ServiceSpecificException e) {
+-            Slog.e(TAG, "Failed to set Netd unsolicited event listener " + e);
+-        }
++        Thread t = new Thread(() -> {
++            try {
++                // Do not stall system_server startup on netd: netd may not have registered
++                // itself yet (it can be slow, e.g. waiting for BPF programs). Bind it
++                // asynchronously so boot can progress.
++                mNetdService = mServices.getNetd();
++                if (mNetdService != null) {
++                    mNetdService.registerUnsolicitedEventListener(mNetdUnsolicitedEventListener);
++                    if (DBG) Slog.d(TAG, "Register unsolicited event listener");
++                }
++            } catch (RemoteException | ServiceSpecificException e) {
++                Slog.e(TAG, "Failed to set Netd unsolicited event listener " + e);
++            }
++        }, "netd-connect");
++        t.setDaemon(true);
++        t.start();
+     }
+ 
+     /**
+diff --git a/services/core/jni/com_android_server_power_PowerManagerService.cpp b/services/core/jni/com_android_server_power_PowerManagerService.cpp
+index 523f8021..741701e1 100644
+--- a/services/core/jni/com_android_server_power_PowerManagerService.cpp
++++ b/services/core/jni/com_android_server_power_PowerManagerService.cpp
+@@ -114,11 +114,17 @@ static void connectPowerHalLocked() {
+     }
+ }
+ 
+-// Check validity of current handle to the Lineage power HAL service, and call getService() if necessary.
++// Check validity of current handle to the Lineage power HAL service, and call
++// tryGetService() if necessary.
++// tryGetService() (getService() degil) kullanilir: bu HAL cihza VINTF
++// manifest'inde beyan edilmediyi icin hic kaydedilmeyecek ve getService()
++// (waitForService) sonsuza kadar bekleyerek system_server'i bloklar.
++// PerformManagerService.onBootPhase -> getFeature() -> nativeGetFeature()
++// yoluyla boot dongusune yol aciyordu.
+ // The caller must be holding gPowerHalMutex.
+ void connectLineagePowerHalLocked() {
+     if (gLineagePowerHalExists && gLineagePowerHalV1_0_ == nullptr) {
+-        gLineagePowerHalV1_0_ = ILineagePowerV1_0::getService();
++        gLineagePowerHalV1_0_ = ILineagePowerV1_0::tryGetService();
+         if (gLineagePowerHalV1_0_ != nullptr) {
+             ALOGI("Loaded power HAL service");
+         } else {

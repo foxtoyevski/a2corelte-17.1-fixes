@@ -1,0 +1,12 @@
+diff --git a/wpa_supplicant/Android.mk b/wpa_supplicant/Android.mk
+index 8bcd7ef..1dcebd6 100644
+--- a/wpa_supplicant/Android.mk
++++ b/wpa_supplicant/Android.mk
+@@ -426,6 +426,7 @@ OBJS_d += $(DRV_BOTH_OBJS)
+ L_CFLAGS += $(DRV_BOTH_CFLAGS)
+ LDFLAGS += $(DRV_BOTH_LDFLAGS)
+ LIBS += $(DRV_BOTH_LIBS)
++NEED_AP_MLME=y
+ else
+ NEED_AP_MLME=
+ OBJS_d += $(DRV_WPA_OBJS)

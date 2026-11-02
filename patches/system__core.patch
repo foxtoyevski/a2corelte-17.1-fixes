@@ -1,0 +1,98 @@
+diff --git a/init/Android.mk b/init/Android.mk
+index c4f7d34..df187f4 100644
+--- a/init/Android.mk
++++ b/init/Android.mk
+@@ -44,7 +44,10 @@ init_cflags += \
+ # Do not build this even with mmma if we're system-as-root, otherwise it will overwrite the symlink.
+ ifneq ($(BOARD_BUILD_SYSTEM_ROOT_IMAGE),true)
+ include $(CLEAR_VARS)
+-LOCAL_CPPFLAGS := $(init_cflags)
++# Non-SAR: duz (flat) sistem image'inda /system'e pivot edilmez, /system
++# normal bir bolum olarak mount edilir. first_stage_mount.cpp buna gore
++# TrySwitchSystemAsRoot()'i atlar.
++LOCAL_CPPFLAGS := $(init_cflags) -DANDROID_INIT_NON_SYSTEM_ROOT=1
+ LOCAL_SRC_FILES := \
+     devices.cpp \
+     first_stage_init.cpp \
+diff --git a/init/builtins.cpp b/init/builtins.cpp
+index 7db851a..04043d6 100644
+--- a/init/builtins.cpp
++++ b/init/builtins.cpp
+@@ -1010,6 +1010,7 @@ static Result<Success> do_restorecon(const BuiltinArguments& args) {
+         {"--recursive", SELINUX_ANDROID_RESTORECON_RECURSE},
+         {"--skip-ce", SELINUX_ANDROID_RESTORECON_SKIPCE},
+         {"--cross-filesystems", SELINUX_ANDROID_RESTORECON_CROSS_FILESYSTEMS},
++        {"--force", SELINUX_ANDROID_RESTORECON_FORCE},
+         {0, 0}
+     };
+ 
+diff --git a/init/first_stage_mount.cpp b/init/first_stage_mount.cpp
+index 3e76556..6f1fbbf 100644
+--- a/init/first_stage_mount.cpp
++++ b/init/first_stage_mount.cpp
+@@ -524,14 +524,27 @@ bool FirstStageMount::TrySwitchSystemAsRoot() {
+     return true;
+ }
+ 
++// Non-SAR cihazlarda (BOARD_BUILD_SYSTEM_ROOT_IMAGE != true) sistem image'i
++// duz (flat) olarak uretilir: /system/bin/init, image kokunde /bin/init'tir ve
++// ic ice /system dizini bulunmaz. Bu durumda SwitchRoot("/system") calisamaz:
++// (1) read-only /system uzerinde /dev, /proc, /sys gibi mount noktalari
++//     yaratilamaz, (2) pivot sonrasi /system/bin init bulunamaz.
++// Bu yuzden kok ramdisk'te kalinir, /system normal bir bolum olarak mount
++// edilir ve init /system/bin/init'i selinux_setup ile calistirir.
++#if defined(ANDROID_INIT_NON_SYSTEM_ROOT)
++constexpr bool kSystemAsRoot = false;
++#else
++constexpr bool kSystemAsRoot = true;
++#endif
++
+ bool FirstStageMount::MountPartitions() {
+-    if (!TrySwitchSystemAsRoot()) return false;
++    if (kSystemAsRoot && !TrySwitchSystemAsRoot()) return false;
+ 
+     if (!SkipMountingPartitions(&fstab_)) return false;
+ 
+     for (auto current = fstab_.begin(); current != fstab_.end();) {
+-        // We've already mounted /system above.
+-        if (current->mount_point == "/system") {
++        // We've already mounted /system above (system-as-root only).
++        if (kSystemAsRoot && current->mount_point == "/system") {
+             ++current;
+             continue;
+         }
+diff --git a/libutils/Android.bp b/libutils/Android.bp
+index 4f194c7..778376f 100644
+--- a/libutils/Android.bp
++++ b/libutils/Android.bp
+@@ -88,10 +88,6 @@ cc_defaults {
+                 "libdl",
+                 "libvndksupport",
+             ],
+-
+-            sanitize: {
+-                misc_undefined: ["integer"],
+-            },
+         },
+ 
+         recovery: {
+diff --git a/rootdir/Android.mk b/rootdir/Android.mk
+index 24b3999..2813f76 100644
+--- a/rootdir/Android.mk
++++ b/rootdir/Android.mk
+@@ -12,7 +12,15 @@ LOCAL_REQUIRED_MODULES := fsverity_init
+ 
+ # The init symlink must be a post install command of a file that is to TARGET_ROOT_OUT.
+ # Since init.rc is required for init and satisfies that requirement, we hijack it to create the symlink.
++#
++# Non-SAR (a2corelte port): boot ramdisk'teki /init GERCEK init_first_stage binary'si
++# olmak zorundadir; kernel /system mount edilmeden once onu calistirir. Bu symlink
++# yalnizca system-as-root icin gereklidir; non-SAR'da init/Android.mk'nin kurdugu
++# gercek init binary'sinin UZERINE yazarak cihazi boot edemez hale getirir
++# (Samsung splash'te takilir). Bu yuzden yalnizca SAR'da olustur.
++ifeq ($(BOARD_BUILD_SYSTEM_ROOT_IMAGE),true)
+ LOCAL_POST_INSTALL_CMD := ln -sf /system/bin/init $(TARGET_ROOT_OUT)/init
++endif
+ 
+ include $(BUILD_PREBUILT)
+ 

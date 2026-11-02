@@ -1,0 +1,23 @@
+diff --git a/bootstrap/glob.go b/bootstrap/glob.go
+index 9841611..786c662 100644
+--- a/bootstrap/glob.go
++++ b/bootstrap/glob.go
+@@ -17,6 +17,7 @@ package bootstrap
+ import (
+ 	"bytes"
+ 	"fmt"
++	"os"
+ 	"path/filepath"
+ 	"strings"
+ 
+@@ -125,6 +126,10 @@ func globSingletonFactory(ctx *blueprint.Context) func() blueprint.Singleton {
+ 
+ func (s *globSingleton) GenerateBuildActions(ctx blueprint.SingletonContext) {
+ 	for _, g := range s.globLister() {
++		if strings.Contains(g.Pattern, "$") || strings.Contains(strings.Join(g.Excludes, ","), "$") {
++			fmt.Fprintf(os.Stderr, "GLOBDEBUG bad pattern name=%q pattern=%q excludes=%v\n",
++					g.Name, g.Pattern, g.Excludes)
++		}
+ 		fileListFile := filepath.Join(BuildDir, ".glob", g.Name)
+ 
+ 		if s.writeRule {

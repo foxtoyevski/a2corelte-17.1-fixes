@@ -1,0 +1,68 @@
+diff --git a/prebuilts/api/29.0/private/domain.te b/prebuilts/api/29.0/private/domain.te
+index 1d26761..9a9dbd0 100644
+--- a/prebuilts/api/29.0/private/domain.te
++++ b/prebuilts/api/29.0/private/domain.te
+@@ -280,6 +280,7 @@ neverallow ~dac_override_allowed self:global_capability_class_set dac_override;
+ neverallow ~{
+   dac_override_allowed
+   traced_probes
++  data_between_core_and_vendor_violators
+   userdebug_or_eng(`heapprofd')
+ } self:global_capability_class_set dac_read_search;
+ 
+diff --git a/prebuilts/api/29.0/private/init.te b/prebuilts/api/29.0/private/init.te
+index 374b207..a97903a 100644
+--- a/prebuilts/api/29.0/private/init.te
++++ b/prebuilts/api/29.0/private/init.te
+@@ -9,6 +9,17 @@ domain_auto_trans(init, charger_exec, charger)
+ domain_auto_trans(init, e2fs_exec, e2fs)
+ domain_auto_trans(init, bpfloader_exec, bpfloader)
+ 
++# Restored "Transition for services" block: the original port dropped the AOSP
++# service transitions from init.te, so ComputeContextFromExecutable() found no
++# domain transition for these daemons and Service::Start() bailed out under
++# enforcing SELinux (init.svc.* stayed unset and the daemons never ran).
++domain_auto_trans(init, installd_exec, installd)
++domain_auto_trans(init, keystore_exec, keystore)
++domain_auto_trans(init, storaged_exec, storaged)
++domain_auto_trans(init, wificond_exec, wificond)
++domain_auto_trans(init, surfaceflinger_exec, surfaceflinger)
++domain_auto_trans(init, ashmemd_exec, ashmemd)
++
+ recovery_only(`
+   # Files in recovery image are labeled as rootfs.
+   domain_trans(init, rootfs, adbd)
+diff --git a/private/domain.te b/private/domain.te
+index 1d26761..9a9dbd0 100644
+--- a/private/domain.te
++++ b/private/domain.te
+@@ -280,6 +280,7 @@ neverallow ~dac_override_allowed self:global_capability_class_set dac_override;
+ neverallow ~{
+   dac_override_allowed
+   traced_probes
++  data_between_core_and_vendor_violators
+   userdebug_or_eng(`heapprofd')
+ } self:global_capability_class_set dac_read_search;
+ 
+diff --git a/private/init.te b/private/init.te
+index 374b207..a97903a 100644
+--- a/private/init.te
++++ b/private/init.te
+@@ -9,6 +9,17 @@ domain_auto_trans(init, charger_exec, charger)
+ domain_auto_trans(init, e2fs_exec, e2fs)
+ domain_auto_trans(init, bpfloader_exec, bpfloader)
+ 
++# Restored "Transition for services" block: the original port dropped the AOSP
++# service transitions from init.te, so ComputeContextFromExecutable() found no
++# domain transition for these daemons and Service::Start() bailed out under
++# enforcing SELinux (init.svc.* stayed unset and the daemons never ran).
++domain_auto_trans(init, installd_exec, installd)
++domain_auto_trans(init, keystore_exec, keystore)
++domain_auto_trans(init, storaged_exec, storaged)
++domain_auto_trans(init, wificond_exec, wificond)
++domain_auto_trans(init, surfaceflinger_exec, surfaceflinger)
++domain_auto_trans(init, ashmemd_exec, ashmemd)
++
+ recovery_only(`
+   # Files in recovery image are labeled as rootfs.
+   domain_trans(init, rootfs, adbd)

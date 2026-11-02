@@ -1,0 +1,637 @@
+diff --git a/audio/core/all-versions/default/Device.cpp b/audio/core/all-versions/default/Device.cpp
+index bec22df..ac590f0 100644
+--- a/audio/core/all-versions/default/Device.cpp
++++ b/audio/core/all-versions/default/Device.cpp
+@@ -19,6 +19,7 @@
+ #include "core/default/Device.h"
+ #include <HidlUtils.h>
+ #include "core/default/Conversions.h"
++#include "core/default/OreoCompat.h"
+ #include "core/default/StreamIn.h"
+ #include "core/default/StreamOut.h"
+ #include "core/default/Util.h"
+@@ -39,7 +40,8 @@ namespace implementation {
+ 
+ using ::android::hardware::audio::common::CPP_VERSION::implementation::HidlUtils;
+ 
+-Device::Device(audio_hw_device_t* device) : mDevice(device) {}
++Device::Device(audio_hw_device_t* device, bool legacy81)
++    : mDevice(device), mLegacy81(legacy81) {}
+ 
+ Device::~Device() {
+     int status = audio_hw_device_close(mDevice);
+@@ -106,6 +108,13 @@ Return<void> Device::getMicMute(getMicMute_cb _hidl_cb) {
+ }
+ 
+ Return<Result> Device::setMasterMute(bool mute) {
++    if (mLegacy81) {
++        auto dev = ::oreo::dev(mDevice);
++        if (dev->set_master_mute == NULL) {
++            return Result::NOT_SUPPORTED;
++        }
++        return analyzeStatus("set_master_mute", dev->set_master_mute(dev, mute));
++    }
+     Result retval(Result::NOT_SUPPORTED);
+     if (mDevice->set_master_mute != NULL) {
+         retval = analyzeStatus("set_master_mute", mDevice->set_master_mute(mDevice, mute));
+@@ -116,7 +125,12 @@ Return<Result> Device::setMasterMute(bool mute) {
+ Return<void> Device::getMasterMute(getMasterMute_cb _hidl_cb) {
+     Result retval(Result::NOT_SUPPORTED);
+     bool mute = false;
+-    if (mDevice->get_master_mute != NULL) {
++    if (mLegacy81) {
++        auto dev = ::oreo::dev(mDevice);
++        if (dev->get_master_mute != NULL) {
++            retval = analyzeStatus("get_master_mute", dev->get_master_mute(dev, &mute));
++        }
++    } else if (mDevice->get_master_mute != NULL) {
+         retval = analyzeStatus("get_master_mute", mDevice->get_master_mute(mDevice, &mute));
+     }
+     _hidl_cb(retval, mute);
+@@ -251,6 +265,9 @@ Return<void> Device::openInputStream(int32_t ioHandle, const DeviceAddress& devi
+ #endif /* MAJOR_VERSION */
+ 
+ Return<bool> Device::supportsAudioPatches() {
++    if (mLegacy81) {
++        return ::oreo::dev(mDevice)->create_audio_patch != nullptr;
++    }
+     return version() >= AUDIO_DEVICE_API_VERSION_3_0;
+ }
+ 
+@@ -263,9 +280,30 @@ Return<void> Device::createAudioPatch(const hidl_vec<AudioPortConfig>& sources,
+         std::unique_ptr<audio_port_config[]> halSources(HidlUtils::audioPortConfigsToHal(sources));
+         std::unique_ptr<audio_port_config[]> halSinks(HidlUtils::audioPortConfigsToHal(sinks));
+         audio_patch_handle_t halPatch = AUDIO_PATCH_HANDLE_NONE;
+-        retval = analyzeStatus("create_audio_patch",
+-                               mDevice->create_audio_patch(mDevice, sources.size(), &halSources[0],
+-                                                           sinks.size(), &halSinks[0], &halPatch));
++        if (mLegacy81) {
++            auto dev = ::oreo::dev(mDevice);
++            if (dev->create_audio_patch != nullptr) {
++                std::unique_ptr<::oreo::audio_port_config_oreo[]> oreoSources(
++                    new ::oreo::audio_port_config_oreo[sources.size()]);
++                std::unique_ptr<::oreo::audio_port_config_oreo[]> oreoSinks(
++                    new ::oreo::audio_port_config_oreo[sinks.size()]);
++                for (size_t i = 0; i < sources.size(); ++i) {
++                    ::oreo::portConfigToOreo(halSources[i], &oreoSources[i]);
++                }
++                for (size_t i = 0; i < sinks.size(); ++i) {
++                    ::oreo::portConfigToOreo(halSinks[i], &oreoSinks[i]);
++                }
++                retval = analyzeStatus("create_audio_patch",
++                                       dev->create_audio_patch(dev, sources.size(), &oreoSources[0],
++                                                               sinks.size(), &oreoSinks[0],
++                                                               &halPatch));
++            }
++        } else {
++            retval = analyzeStatus("create_audio_patch",
++                                   mDevice->create_audio_patch(mDevice, sources.size(),
++                                                               &halSources[0], sinks.size(),
++                                                               &halSinks[0], &halPatch));
++        }
+         if (retval == Result::OK) {
+             patch = static_cast<AudioPatchHandle>(halPatch);
+         }
+@@ -276,6 +314,14 @@ Return<void> Device::createAudioPatch(const hidl_vec<AudioPortConfig>& sources,
+ 
+ Return<Result> Device::releaseAudioPatch(int32_t patch) {
+     if (version() >= AUDIO_DEVICE_API_VERSION_3_0) {
++        if (mLegacy81) {
++            auto dev = ::oreo::dev(mDevice);
++            if (dev->release_audio_patch == nullptr) {
++                return Result::NOT_SUPPORTED;
++            }
++            return analyzeStatus("release_audio_patch", dev->release_audio_patch(
++                                                            dev, static_cast<audio_patch_handle_t>(patch)));
++        }
+         return analyzeStatus(
+             "release_audio_patch",
+             mDevice->release_audio_patch(mDevice, static_cast<audio_patch_handle_t>(patch)));
+@@ -286,10 +332,24 @@ Return<Result> Device::releaseAudioPatch(int32_t patch) {
+ Return<void> Device::getAudioPort(const AudioPort& port, getAudioPort_cb _hidl_cb) {
+     audio_port halPort;
+     HidlUtils::audioPortToHal(port, &halPort);
+-    Result retval = analyzeStatus("get_audio_port", mDevice->get_audio_port(mDevice, &halPort));
++    Result retval(Result::NOT_SUPPORTED);
+     AudioPort resultPort = port;
+-    if (retval == Result::OK) {
+-        HidlUtils::audioPortFromHal(halPort, &resultPort);
++    if (mLegacy81) {
++        auto dev = ::oreo::dev(mDevice);
++        if (dev->get_audio_port != nullptr) {
++            ::oreo::audio_port_oreo oreoPort;
++            ::oreo::portToOreo(halPort, &oreoPort);
++            retval = analyzeStatus("get_audio_port", dev->get_audio_port(dev, &oreoPort));
++            if (retval == Result::OK) {
++                ::oreo::portFromOreo(oreoPort, &halPort);
++                HidlUtils::audioPortFromHal(halPort, &resultPort);
++            }
++        }
++    } else {
++        retval = analyzeStatus("get_audio_port", mDevice->get_audio_port(mDevice, &halPort));
++        if (retval == Result::OK) {
++            HidlUtils::audioPortFromHal(halPort, &resultPort);
++        }
+     }
+     _hidl_cb(retval, resultPort);
+     return Void();
+@@ -299,6 +359,16 @@ Return<Result> Device::setAudioPortConfig(const AudioPortConfig& config) {
+     if (version() >= AUDIO_DEVICE_API_VERSION_3_0) {
+         struct audio_port_config halPortConfig;
+         HidlUtils::audioPortConfigToHal(config, &halPortConfig);
++        if (mLegacy81) {
++            auto dev = ::oreo::dev(mDevice);
++            if (dev->set_audio_port_config == nullptr) {
++                return Result::NOT_SUPPORTED;
++            }
++            ::oreo::audio_port_config_oreo oreoPortConfig;
++            ::oreo::portConfigToOreo(halPortConfig, &oreoPortConfig);
++            return analyzeStatus("set_audio_port_config",
++                                 dev->set_audio_port_config(dev, &oreoPortConfig));
++        }
+         return analyzeStatus("set_audio_port_config",
+                              mDevice->set_audio_port_config(mDevice, &halPortConfig));
+     }
+@@ -353,7 +423,14 @@ Return<void> Device::debugDump(const hidl_handle& fd) {
+ 
+ Return<void> Device::debug(const hidl_handle& fd, const hidl_vec<hidl_string>& /* options */) {
+     if (fd.getNativeHandle() != nullptr && fd->numFds == 1) {
+-        analyzeStatus("dump", mDevice->dump(mDevice, fd->data[0]));
++        if (mLegacy81) {
++            auto dev = ::oreo::dev(mDevice);
++            if (dev->dump != nullptr) {
++                analyzeStatus("dump", dev->dump(dev, fd->data[0]));
++            }
++        } else {
++            analyzeStatus("dump", mDevice->dump(mDevice, fd->data[0]));
++        }
+     }
+     return Void();
+ }
+@@ -361,17 +438,21 @@ Return<void> Device::debug(const hidl_handle& fd, const hidl_vec<hidl_string>& /
+ #if MAJOR_VERSION >= 4
+ Return<void> Device::getMicrophones(getMicrophones_cb _hidl_cb) {
+     Result retval = Result::NOT_SUPPORTED;
+-    size_t actual_mics = AUDIO_MICROPHONE_MAX_COUNT;
+-    audio_microphone_characteristic_t mic_array[AUDIO_MICROPHONE_MAX_COUNT];
+-
+     hidl_vec<MicrophoneInfo> microphones;
+-    if (mDevice->get_microphones != NULL &&
+-        mDevice->get_microphones(mDevice, &mic_array[0], &actual_mics) == 0) {
+-        microphones.resize(actual_mics);
+-        for (size_t i = 0; i < actual_mics; ++i) {
+-            halToMicrophoneCharacteristics(&microphones[i], mic_array[i]);
++    // 8.1 HALs have no get_microphones; Q puts it in the middle of
++    // audio_hw_device where 8.1 has dump, so never touch it for legacy HALs.
++    if (!mLegacy81) {
++        size_t actual_mics = AUDIO_MICROPHONE_MAX_COUNT;
++        audio_microphone_characteristic_t mic_array[AUDIO_MICROPHONE_MAX_COUNT];
++
++        if (mDevice->get_microphones != NULL &&
++            mDevice->get_microphones(mDevice, &mic_array[0], &actual_mics) == 0) {
++            microphones.resize(actual_mics);
++            for (size_t i = 0; i < actual_mics; ++i) {
++                halToMicrophoneCharacteristics(&microphones[i], mic_array[i]);
++            }
++            retval = Result::OK;
+         }
+-        retval = Result::OK;
+     }
+     _hidl_cb(retval, microphones);
+     return Void();
+diff --git a/audio/core/all-versions/default/DevicesFactory.cpp b/audio/core/all-versions/default/DevicesFactory.cpp
+index 729f18c..19c64bc 100644
+--- a/audio/core/all-versions/default/DevicesFactory.cpp
++++ b/audio/core/all-versions/default/DevicesFactory.cpp
+@@ -21,7 +21,9 @@
+ #include "core/default/PrimaryDevice.h"
+ 
+ #include <string.h>
++#include <string>
+ 
++#include <android-base/properties.h>
+ #include <android/log.h>
+ 
+ namespace android {
+@@ -30,6 +32,22 @@ namespace audio {
+ namespace CPP_VERSION {
+ namespace implementation {
+ 
++// The vendor primary HAL (audio.primary.<platform>.so) on this device is a
++// prebuilt built against the Android 8.1 headers; everything else (usb,
++// r_submix, bluetooth, stub) is built from this tree with Q headers. The
++// vendor.audio.legacy81 property overrides the default decision ("1" forces
++// the 8.1 ABI view, "0" disables it) for testing.
++static bool isLegacy81Hal(const char* moduleName) {
++    bool legacy = strcmp(moduleName, AUDIO_HARDWARE_MODULE_ID_PRIMARY) == 0;
++    const std::string prop = android::base::GetProperty("vendor.audio.legacy81", "");
++    if (prop == "0") {
++        legacy = false;
++    } else if (prop == "1") {
++        legacy = true;
++    }
++    return legacy;
++}
++
+ #if MAJOR_VERSION == 2
+ Return<void> DevicesFactory::openDevice(IDevicesFactory::Device device, openDevice_cb _hidl_cb) {
+     switch (device) {
+@@ -70,7 +88,7 @@ Return<void> DevicesFactory::openDevice(const char* moduleName, Callback _hidl_c
+     sp<DeviceShim> result;
+     int halStatus = loadAudioInterface(moduleName, &halDevice);
+     if (halStatus == OK) {
+-        result = new DeviceShim(halDevice);
++        result = new DeviceShim(halDevice, isLegacy81Hal(moduleName));
+         retval = Result::OK;
+     } else if (halStatus == -EINVAL) {
+         retval = Result::NOT_INITIALIZED;
+diff --git a/audio/core/all-versions/default/PrimaryDevice.cpp b/audio/core/all-versions/default/PrimaryDevice.cpp
+index 99590b0..70d69b7 100644
+--- a/audio/core/all-versions/default/PrimaryDevice.cpp
++++ b/audio/core/all-versions/default/PrimaryDevice.cpp
+@@ -29,7 +29,8 @@ namespace audio {
+ namespace CPP_VERSION {
+ namespace implementation {
+ 
+-PrimaryDevice::PrimaryDevice(audio_hw_device_t* device) : mDevice(new Device(device)) {}
++PrimaryDevice::PrimaryDevice(audio_hw_device_t* device, bool legacy81)
++    : mDevice(new Device(device, legacy81)) {}
+ 
+ PrimaryDevice::~PrimaryDevice() {}
+ 
+diff --git a/audio/core/all-versions/default/StreamIn.cpp b/audio/core/all-versions/default/StreamIn.cpp
+index caf8bae..b620bb9 100644
+--- a/audio/core/all-versions/default/StreamIn.cpp
++++ b/audio/core/all-versions/default/StreamIn.cpp
+@@ -450,7 +450,10 @@ Return<void> StreamIn::debug(const hidl_handle& fd, const hidl_vec<hidl_string>&
+ 
+ #if MAJOR_VERSION >= 4
+ Return<void> StreamIn::updateSinkMetadata(const SinkMetadata& sinkMetadata) {
+-    if (mStream->update_sink_metadata == nullptr) {
++    // 8.1 audio_stream_in ends at get_mmap_position; Q's update_sink_metadata
++    // sits past the end of the legacy struct, where the HAL's private data
++    // reads back as a non-null garbage pointer. Never touch it.
++    if (mDevice->isLegacy81() || mStream->update_sink_metadata == nullptr) {
+         return Void();  // not supported by the HAL
+     }
+     std::vector<record_track_metadata> halTracks;
+@@ -479,6 +482,11 @@ Return<void> StreamIn::updateSinkMetadata(const SinkMetadata& sinkMetadata) {
+ }
+ 
+ Return<void> StreamIn::getActiveMicrophones(getActiveMicrophones_cb _hidl_cb) {
++    if (mDevice->isLegacy81()) {
++        // Q-only stream field; past the end of the 8.1 struct.
++        _hidl_cb(Result::NOT_SUPPORTED, hidl_vec<MicrophoneInfo>());
++        return Void();
++    }
+     Result retval = Result::NOT_SUPPORTED;
+     size_t actual_mics = AUDIO_MICROPHONE_MAX_COUNT;
+     audio_microphone_characteristic_t mic_array[AUDIO_MICROPHONE_MAX_COUNT];
+@@ -500,6 +508,9 @@ Return<void> StreamIn::getActiveMicrophones(getActiveMicrophones_cb _hidl_cb) {
+ 
+ #if MAJOR_VERSION >= 5
+ Return<Result> StreamIn::setMicrophoneDirection(MicrophoneDirection direction) {
++    if (mDevice->isLegacy81()) {
++        return Result::NOT_SUPPORTED;  // Q-only stream field
++    }
+     if (mStream->set_microphone_direction == nullptr) {
+         return Result::NOT_SUPPORTED;
+     }
+@@ -514,6 +525,9 @@ Return<Result> StreamIn::setMicrophoneDirection(MicrophoneDirection direction) {
+ }
+ 
+ Return<Result> StreamIn::setMicrophoneFieldDimension(float zoom) {
++    if (mDevice->isLegacy81()) {
++        return Result::NOT_SUPPORTED;  // Q-only stream field
++    }
+     if (mStream->set_microphone_field_dimension == nullptr) {
+         return Result::NOT_SUPPORTED;
+     }
+diff --git a/audio/core/all-versions/default/StreamOut.cpp b/audio/core/all-versions/default/StreamOut.cpp
+index 19f925a..ab453b5 100644
+--- a/audio/core/all-versions/default/StreamOut.cpp
++++ b/audio/core/all-versions/default/StreamOut.cpp
+@@ -547,7 +547,11 @@ Return<void> StreamOut::debug(const hidl_handle& fd, const hidl_vec<hidl_string>
+ 
+ #if MAJOR_VERSION >= 4
+ Return<void> StreamOut::updateSourceMetadata(const SourceMetadata& sourceMetadata) {
+-    if (mStream->update_source_metadata == nullptr) {
++    // 8.1 audio_stream_out ends at get_mmap_position; Q's
++    // update_source_metadata sits past the end of the legacy struct, where the
++    // HAL's private data reads back as a non-null garbage pointer. Never touch
++    // it.
++    if (mDevice->isLegacy81() || mStream->update_source_metadata == nullptr) {
+         return Void();  // not supported by the HAL
+     }
+     std::vector<playback_track_metadata> halTracks;
+diff --git a/audio/core/all-versions/default/include/core/default/Device.h b/audio/core/all-versions/default/include/core/default/Device.h
+index e64f00f..6da3290 100644
+--- a/audio/core/all-versions/default/include/core/default/Device.h
++++ b/audio/core/all-versions/default/include/core/default/Device.h
+@@ -49,7 +49,10 @@ using namespace ::android::hardware::audio::common::CPP_VERSION;
+ using namespace ::android::hardware::audio::CPP_VERSION;
+ 
+ struct Device : public IDevice, public ParametersUtil {
+-    explicit Device(audio_hw_device_t* device);
++    // legacy81: the HAL module was built against the Android 8.1 headers, so
++    // audio_hw_device fields from dump onwards and audio_port_config::ext are
++    // shifted with respect to the Q headers this wrapper is compiled against.
++    explicit Device(audio_hw_device_t* device, bool legacy81 = false);
+ 
+     // Methods from ::android::hardware::audio::CPP_VERSION::IDevice follow.
+     Return<Result> initCheck() override;
+@@ -123,9 +126,11 @@ struct Device : public IDevice, public ParametersUtil {
+     void closeInputStream(audio_stream_in_t* stream);
+     void closeOutputStream(audio_stream_out_t* stream);
+     audio_hw_device_t* device() const { return mDevice; }
++    bool isLegacy81() const { return mLegacy81; }
+ 
+    private:
+     audio_hw_device_t* mDevice;
++    const bool mLegacy81;
+ 
+     virtual ~Device();
+ 
+diff --git a/audio/core/all-versions/default/include/core/default/PrimaryDevice.h b/audio/core/all-versions/default/include/core/default/PrimaryDevice.h
+index 9d69cb0..39c135e 100644
+--- a/audio/core/all-versions/default/include/core/default/PrimaryDevice.h
++++ b/audio/core/all-versions/default/include/core/default/PrimaryDevice.h
+@@ -40,7 +40,7 @@ using namespace ::android::hardware::audio::common::CPP_VERSION;
+ using namespace ::android::hardware::audio::CPP_VERSION;
+ 
+ struct PrimaryDevice : public IPrimaryDevice {
+-    explicit PrimaryDevice(audio_hw_device_t* device);
++    explicit PrimaryDevice(audio_hw_device_t* device, bool legacy81 = false);
+ 
+     // Methods from ::android::hardware::audio::CPP_VERSION::IDevice follow.
+     Return<Result> initCheck() override;
+diff --git a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+index 3d138f7..c190415 100644
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+@@ -839,7 +839,22 @@ Error HWC2On1Adapter::Display::setClientTarget(buffer_handle_t target,
+     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
+ 
+     ALOGV("[%" PRIu64 "] setClientTarget(%p, %d)", mId, target, acquireFence);
+-    mClientTarget.setBuffer(target);
++    // SurfaceFlinger, HwcBufferCache "this buffer is already in HWC" dediginde
++    // target=NULL gonderir. Bu, HWC'nin buffer'i elinde tuttugunu varsayar.
++    // Exynos HWC1.5 ekran off->on dongusunde bufferi kaybeder; o durumda
++    // mevcut target'i NULL ile sifirlamak sonsuz "skip" dongusune yol acar
++    // (ekran boyanmaz). Eski/mevcut buffer'i koruyalim; yeni bir gercek
++    // buffer geldiginde onu kullanalim.
++    if (target != nullptr) {
++        mClientTarget.setBuffer(target);
++    } else if (mClientTarget.getBuffer() == nullptr) {
++        // Ilk kare henuz hic buffer gelmemis; NULL kalsin, prepare skip
++        // mantigi hala gecerli.
++        mClientTarget.setBuffer(nullptr);
++    } else {
++        ALOGV("[%" PRIu64 "] setClientTarget(NULL) - mevcut target korunuyor",
++                mId);
++    }
+     mClientTarget.setFence(acquireFence);
+     // dataspace and damage can't be used by HWC1, so ignore them
+     return Error::None;
+@@ -1222,8 +1237,19 @@ bool HWC2On1Adapter::Display::prepare() {
+     if (mGeometryChanged) {
+         mHwc1RequestedContents->flags |= HWC_GEOMETRY_CHANGED;
+     }
+-    mHwc1RequestedContents->outbuf = mOutputBuffer.getBuffer();
+-    mHwc1RequestedContents->outbufAcquireFenceFd = mOutputBuffer.getFence();
++    // SurfaceFlinger, outbuf'i YALNIZCA virtual display icin (1.3+)
++    // setOutputBuffer ile set eder; fiziksel ekrana hic cagirmaz. Dolayisiyla
++    // fiziksel ekranda mOutputBuffer HEp NULL olur ve Samsung Exynos HWC1.5
++    // HAL'i (Nougat doneminden kalma) outbuf'i NULL gormeye alisik DEGILDIR.
++    // Fiziksel ekranda cizilecek buffer zaten framebuffer target (client
++    // target) buffer'i ile aynidir, o yuzden mOutputBuffer bosken onu kullan.
++    if (mOutputBuffer.getBuffer() == nullptr) {
++        mHwc1RequestedContents->outbuf = mClientTarget.getBuffer();
++        mHwc1RequestedContents->outbufAcquireFenceFd = mClientTarget.getFence();
++    } else {
++        mHwc1RequestedContents->outbuf = mOutputBuffer.getBuffer();
++        mHwc1RequestedContents->outbufAcquireFenceFd = mOutputBuffer.getFence();
++    }
+ 
+     // +1 is for framebuffer target layer.
+     mHwc1RequestedContents->numHwLayers = mLayers.size() + 1;
+@@ -1237,6 +1263,33 @@ bool HWC2On1Adapter::Display::prepare() {
+ 
+     prepareFramebufferTarget();
+ 
++    // Exynos HWC1.5 HAL'i (hwcomposer.exynos5.so) tum katmanlarin handle'ini
++    // prepare sirasinda dogrular -- HWC_SKIP_LAYER olanlar dahil
++    // (ExynosDisplay::doPreProcessing). HWC2On1Adapter'in
++    // HWC_FRAMEBUFFER|HWC_SKIP_LAYER yaptigi ama kendine ait buffer'i
++    // olmayan katmanlarin handle'i nullptr kalir ve HAL onu dereference
++    // ederek cokuyor:
++    //   Fatal signal 11 ... fault addr 0x105
++    //     Cause: null pointer dereference
++    //     #00 libexynosdisplay.so (private_handle_t::validate(native_handle const*)+4)
++    //     #01 libexynosdisplay.so (ExynosDisplay::doPreProcessing(hwc_display_contents_1*)+114)
++    //     #02 libexynosdisplay.so (ExynosOverlayDisplay::doPreProcessing(...)+56)
++    // Ornek: HWC1 HAL'i background colour desteklemedigi icin istemcide
++    // composite edilen SolidColor katmani (Layer::applySolidColorState).
++    // Bu katmanlara framebuffer target'in handle'ini veriyoruz; HWC_SKIP_LAYER
++    // olduklari icin deger HWC tarafindan hic cizilmez, yalnizca dogrulamanin
++    // gecmesi icin gecerli bir native_handle olmasi yeterlidir.
++    {
++        auto& hwc1Target = mHwc1RequestedContents->hwLayers[mLayers.size()];
++        for (auto& layer : mLayers) {
++            auto& hwc1Layer = mHwc1RequestedContents->hwLayers[layer->getHwc1Id()];
++            if (hwc1Layer.handle == nullptr) {
++                hwc1Layer.handle = hwc1Target.handle;
++            }
++        }
++    }
++
++    
+     resetGeometryMarker();
+ 
+     return true;
+@@ -1894,6 +1947,28 @@ void HWC2On1Adapter::Display::prepareFramebufferTarget() {
+     rects[0].bottom = height;
+     hwc1Target.visibleRegionScreen.rects = rects;
+ 
++    // NOTE: handle (handle/backgroundColor union) burada AOSP'de
++    // bilerek birakilip "set" icinde dolduruluyor:
++    //     clientTargetLayer.handle = mClientTarget.getBuffer();  (bkz. set())
++    // Bu, AOSP'un kendi HWC1 HAL'leri icin yeterli: onlar handle'i
++    // set() sirasinda okur.
++    //
++    // Ancak Samsung Exynos HWC1.5 HAL'i (hwcomposer.exynos5.so ->
++    // ExynosOverlayDisplay::doPreProcessing) handle'i PREPARE asamasinda
++    // dogrular. hwLayers dizisi tek seferde allocate edilip frame'ler
++    // boyunca yeniden kullanildigi icin, ilk frame'de handle okunmamis
++    // bellek (null/bozuk) oluyor ve servis her restart'ta cokuyor:
++    //   signal 11 (SIGSEGV) ... fault addr 0x105
++    //     Cause: null pointer dereference
++    //     #00 libexynosdisplay.so (private_handle_t::validate(native_handle const*)+4)
++    //     #01 libexynosdisplay.so (ExynosDisplay::doPreProcessing(hwc_display_contents_1*)+114)
++    //     #02 libexynosdisplay.so (ExynosOverlayDisplay::doPreProcessing(...)+56)
++    //
++    // Cozum: handle'i prepare icinde de doldur. SurfaceFlinger set()'den
++    // ONCE setClientTarget cagirdigi icin mClientTarget bu noktada gecerli.
++    // set() icindeki atama ayni degeri yazdigindan sonuc degismez.
++    hwc1Target.handle = mClientTarget.getBuffer();
++
+     // We will set this to the correct value in set
+     hwc1Target.acquireFenceFd = -1;
+ }
+@@ -2373,8 +2448,77 @@ bool HWC2On1Adapter::prepareAllDisplays() {
+     ALOGV("Calling HWC1 prepare");
+     {
+         ATRACE_NAME("HWC1 prepare");
+-        mHwc1Device->prepare(mHwc1Device, mHwc1Contents.size(),
+-                mHwc1Contents.data());
++
++        // --- HWC1 HAL cagrisini atlat: hedef buffer henuz yok ---------------
++        // SurfaceFlinger, display BufferQueue'da henuz buffer bulamadiginda
++        // setClientTarget/setOutputBuffer CAGIRMADAN NO_ERROR doner:
++        //   frameworks/native/services/surfaceflinger/DisplayHardware/
++        //     FramebufferSurface.cpp:112-116
++        //       err = acquireBufferLocked(&item, 0);
++        //       if (err == BufferQueue::NO_BUFFER_AVAILABLE) {
++        //           mHwcBufferCache.getHwcBuffer(...);
++        //           return NO_ERROR;      // <-- setClientTarget atlandi
++        //       }
++        // Boyle bir karede contents->outbuf ve framebuffer target handle'i
++        // NULL kalir. Exynos HWC1.5 bu degerleri kosulsuz dereference
++        // ederek servis'i cokuyor:
++        //   #00 private_handle_t::validate(native_handle const*)+4
++        //   #01 ExynosDisplay::doPreProcessing(hwc_display_contents_1*)+114
++        //   #02 ExynosOverlayDisplay::doPreProcessing(...)+56
++        //   -> Fatal signal 11, fault addr 0x105, null pointer dereference
++        // Cerceve zaten gosterilecek bir hedef buffer icermedigi icin HWC1
++        // prepare/set cagirmamak dogru davranistir; setAllDisplays() de ayni
++        // bayragi kontrol eder.
++        mHwc1FrameSkipped = true;
++        for (auto* displayContents : mHwc1Contents) {
++            if (displayContents == nullptr) {
++                continue;
++            }
++            // Dikkat: displayContents->outbuf'i KONTROL ETMIYORUZ. outbuf
++            // (hwcomposer.h) YALNIZCA virtual display'ler icin SurfaceFlinger
++            // tarafindan set edilir (virtual display HWC 1.3+). SurfaceFlinger,
++            // fiziksel ekrana setOutputBuffer hic cagirmaz -> mOutputBuffer
++            // (ve dolayisiyla outbuf) fiziksel ekranda HER ZAMAN NULL olur.
++            // Dolayisiyla outbuf'u skip kosuluna koymak fiziksel ekranin
++            // prepare/set'ini HER frame'de atlar -> arka isik yanar ama
++            // icerik ekrana hic cizilmez (ekran goruntusu boyle eksilmisti).
++            //
++            // Gercek cokme sebebi (ksa once) framebuffer target layer'inin
++            // handle'i NULL iken Exynos HWC1.5 HAL'inin onu dereference
++            // etmesiydi (doPreProcessing). Bu yuzden skip kararini YALNIZCA
++            // son katmanin (FRAMEBUFFER_TARGET) handle'ina bagliyoruz.
++            auto& targetLayer = displayContents->hwLayers[
++                    displayContents->numHwLayers - 1];
++            if (targetLayer.handle == nullptr) {
++                ALOGW("Skipping HWC1 prepare: no client target buffer yet");
++                break;
++            }
++            mHwc1FrameSkipped = false;
++        }
++
++        if (!mHwc1FrameSkipped) {
++            for (auto& contents : mHwc1Contents) {
++                if (!contents) continue;
++                ALOGI("DBG prep d%zd n=%zu outbuf=%p outfd=%d",
++                        &contents - mHwc1Contents.data(), contents->numHwLayers,
++                        contents->outbuf, contents->outbufAcquireFenceFd);
++                for (size_t l = 0; l < contents->numHwLayers; ++l) {
++                    auto& L = contents->hwLayers[l];
++                    ALOGI("DBG prep  L%zu ct=%d hints=%u h=%p blend=%d xf=%u "
++                            "alpha=%d acq=%d rel=%d src=%d,%d-%d,%d dst=%d,%d-%d,%d",
++                            l, L.compositionType, L.hints, L.handle, L.blending,
++                            L.transform, L.planeAlpha, L.acquireFenceFd,
++                            L.releaseFenceFd, static_cast<int>(L.sourceCropf.left),
++                            static_cast<int>(L.sourceCropf.top),
++                            static_cast<int>(L.sourceCropf.right),
++                            static_cast<int>(L.sourceCropf.bottom),
++                            L.displayFrame.left, L.displayFrame.top,
++                            L.displayFrame.right, L.displayFrame.bottom);
++                }
++            }
++            mHwc1Device->prepare(mHwc1Device, mHwc1Contents.size(),
++                    mHwc1Contents.data());
++        }
+     }
+ 
+     for (size_t c = 0; c < mHwc1Contents.size(); ++c) {
+@@ -2484,7 +2628,15 @@ Error HWC2On1Adapter::setAllDisplays() {
+ 
+     std::unique_lock<std::recursive_timed_mutex> lock(mStateMutex);
+ 
+-    // Make sure we're ready to validate
++    // ONEMLI: Display::set() HWC1 HAL'ini CAGRMAZ; sadece defter tutar
++    // (acquire fence'leri kapatir, client target handle'ini yazar ve
++    // mChanges'i sifirlar). Bu yuzden set() ATLANAMAZ -- atlanirsa mChanges
++    // bir sonraki karede hala dolu kalir ve validate() su hatayi verip
++    // prepareAllDisplays()'i bir daha cagirmaz, yani kare akisi kalici olarak
++    // kilitlenir:
++    //   E HWC2On1Adapter: Validate was called more than once!
++    // Asil atlanmasi gereken yalnizca mHwc1Device->set() cagrisidir; cunku
++    // Exynos HAL'i prepare edilmemis icerige erisip cokuyor.
+     for (size_t hwc1Id = 0; hwc1Id < mHwc1Contents.size(); ++hwc1Id) {
+         if (mHwc1Contents[hwc1Id] == nullptr) {
+             continue;
+@@ -2500,8 +2652,11 @@ Error HWC2On1Adapter::setAllDisplays() {
+         }
+     }
+ 
+-    ALOGV("Calling HWC1 set");
+-    {
++    if (mHwc1FrameSkipped) {
++        ALOGW("Skipping HWC1 set: no client target buffer yet");
++        mHwc1FrameSkipped = false;
++    } else {
++        ALOGV("Calling HWC1 set");
+         ATRACE_NAME("HWC1 set");
+         //dumpHWC1Message(mHwc1Device, mHwc1Contents.size(), mHwc1Contents.data());
+         mHwc1Device->set(mHwc1Device, mHwc1Contents.size(),
+diff --git a/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h b/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h
+index da771dc..312a150 100644
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h
+@@ -677,6 +677,9 @@ private:
+ 
+     bool prepareAllDisplays();
+     std::vector<struct hwc_display_contents_1*> mHwc1Contents;
++    // true ise bu kare icin HWC1 prepare/set cagrilari atlandi: SurfaceFlinger
++    // hedef buffer'i setClientTarget/setOutputBuffer ile vermedi.
++    bool mHwc1FrameSkipped = false;
+     HWC2::Error setAllDisplays();
+ 
+     // Callbacks
+diff --git a/graphics/mapper/2.0/default/Android.bp b/graphics/mapper/2.0/default/Android.bp
+index 8874799..ffb2aae 100644
+--- a/graphics/mapper/2.0/default/Android.bp
++++ b/graphics/mapper/2.0/default/Android.bp
+@@ -1,18 +1,3 @@
+-//
+-// Copyright (C) 2016 The Android Open Source Project
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//      http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
+-
+ cc_library_shared {
+     name: "android.hardware.graphics.mapper@2.0-impl",
+     defaults: ["hidl_defaults"],
+@@ -20,7 +5,7 @@ cc_library_shared {
+     relative_install_path: "hw",
+     srcs: ["passthrough.cpp"],
+     header_libs: [
+-        "android.hardware.graphics.mapper@2.0-passthrough"
++        "android.hardware.graphics.mapper@2.0-passthrough",
+     ],
+     shared_libs: [
+         "android.hardware.graphics.mapper@2.0",

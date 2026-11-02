@@ -1,0 +1,37 @@
+diff --git a/libs/ui/Fence.cpp b/libs/ui/Fence.cpp
+index 4ce891e..16e57bd 100644
+--- a/libs/ui/Fence.cpp
++++ b/libs/ui/Fence.cpp
+@@ -182,4 +182,10 @@ status_t Fence::unflatten(void const*& buffer, size_t& size, int const*& fds, si
+     return NO_ERROR;
+ }
+ 
++// a2corelte (SM-A260F) portu icin: Oreo kamera HAL'i bu yikici sembolu
++// (_ZN7android5FenceD1Ev) bekliyor. A10'da yikici header'da "= default"
++// oldugu icin disarida bir tanim uretilmiyordu; kamera HAL'i bu yuzden
++// vendor namespace'inde yuklenemiyordu. Bkz. include/ui/Fence.h.
++Fence::~Fence() = default;
++
+ } // namespace android
+diff --git a/libs/ui/include/ui/Fence.h b/libs/ui/include/ui/Fence.h
+index 6efecd3..e4c04d1 100644
+--- a/libs/ui/include/ui/Fence.h
++++ b/libs/ui/include/ui/Fence.h
+@@ -144,7 +144,16 @@ public:
+ private:
+     // Only allow instantiation using ref counting.
+     friend class LightRefBase<Fence>;
+-    ~Fence() = default;
++    // a2corelte (SM-A260F) portu: Oreo Exynos kamera HAL'i
++    // (camera.universal7870_go.so -> libexynoscamera.so) bu yikiciyi
++    // DT_NEEDED/dis dunya simgeleriyle ariyor. A10'da "= default" oldugu icin
++    // disarida bir tanim uretilmiyor ve kamera HAL'i vendor namespace'inde
++    //   cannot locate symbol "_ZN7android5FenceD1Ev" referenced by
++    //   "/vendor/lib/libexynoscamera.so"
++    // ile yuklenemiyordu. Yikici burada disarida tanimlanip Fence.cpp icinde
++    // uretiliyor. Erisim yine private; API degismiyor, yalnizca bir disa
++    // cikan sembol ekleniyor (ABI uyumlu).
++    ~Fence();
+ 
+     base::unique_fd mFenceFd;
+ };

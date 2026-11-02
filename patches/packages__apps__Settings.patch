@@ -1,0 +1,71 @@
+diff --git a/src/com/android/settings/development/WifiVerboseLoggingPreferenceController.java b/src/com/android/settings/development/WifiVerboseLoggingPreferenceController.java
+index de53a2d..1808537 100644
+--- a/src/com/android/settings/development/WifiVerboseLoggingPreferenceController.java
++++ b/src/com/android/settings/development/WifiVerboseLoggingPreferenceController.java
+@@ -44,6 +44,11 @@ public class WifiVerboseLoggingPreferenceController extends DeveloperOptionsPref
+         mWifiManager = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
+     }
+ 
++    @Override
++    public boolean isAvailable() {
++        return mWifiManager != null;
++    }
++
+     @Override
+     public String getPreferenceKey() {
+         return WIFI_VERBOSE_LOGGING_KEY;
+@@ -51,6 +56,9 @@ public class WifiVerboseLoggingPreferenceController extends DeveloperOptionsPref
+ 
+     @Override
+     public boolean onPreferenceChange(Preference preference, Object newValue) {
++        if (mWifiManager == null) {
++            return false;
++        }
+         final boolean isEnabled = (Boolean) newValue;
+         mWifiManager.enableVerboseLogging(isEnabled ? SETTING_VALUE_ON : SETTING_VALUE_OFF);
+         return true;
+@@ -58,7 +66,7 @@ public class WifiVerboseLoggingPreferenceController extends DeveloperOptionsPref
+ 
+     @Override
+     public void updateState(Preference preference) {
+-        final boolean enabled = mWifiManager.getVerboseLoggingLevel() > 0;
++        final boolean enabled = mWifiManager != null && mWifiManager.getVerboseLoggingLevel() > 0;
+         ((SwitchPreference) mPreference).setChecked(enabled);
+ 
+     }
+@@ -66,7 +74,9 @@ public class WifiVerboseLoggingPreferenceController extends DeveloperOptionsPref
+     @Override
+     protected void onDeveloperOptionsSwitchDisabled() {
+         super.onDeveloperOptionsSwitchDisabled();
+-        mWifiManager.enableVerboseLogging(SETTING_VALUE_OFF);
++        if (mWifiManager != null) {
++            mWifiManager.enableVerboseLogging(SETTING_VALUE_OFF);
++        }
+         ((SwitchPreference) mPreference).setChecked(false);
+     }
+ }
+diff --git a/src/com/android/settings/development/WirelessAdbPreferenceController.java b/src/com/android/settings/development/WirelessAdbPreferenceController.java
+index 42aae54..4fd2649 100644
+--- a/src/com/android/settings/development/WirelessAdbPreferenceController.java
++++ b/src/com/android/settings/development/WirelessAdbPreferenceController.java
+@@ -55,6 +55,11 @@ public class WirelessAdbPreferenceController extends DeveloperOptionsPreferenceC
+         mWifiManager = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
+     }
+ 
++    @Override
++    public boolean isAvailable() {
++        return mWifiManager != null;
++    }
++
+     @Override
+     public String getPreferenceKey() {
+         return PREF_KEY;
+@@ -111,7 +116,7 @@ public class WirelessAdbPreferenceController extends DeveloperOptionsPreferenceC
+         int port = LineageSettings.Secure.getInt(mContext.getContentResolver(),
+                 LineageSettings.Secure.ADB_PORT, -1);
+         boolean enabled = port > 0;
+-        WifiInfo wifiInfo = mWifiManager.getConnectionInfo();
++        WifiInfo wifiInfo = mWifiManager == null ? null : mWifiManager.getConnectionInfo();
+ 
+         if (enabled && wifiInfo != null) {
+             String hostAddress = NetworkUtils.intToInetAddress(

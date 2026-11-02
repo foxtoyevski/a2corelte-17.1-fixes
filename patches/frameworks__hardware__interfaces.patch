@@ -1,0 +1,32 @@
+diff --git a/sensorservice/libsensorndkbridge/Android.bp b/sensorservice/libsensorndkbridge/Android.bp
+index cb4210c..bc8142a 100644
+--- a/sensorservice/libsensorndkbridge/Android.bp
++++ b/sensorservice/libsensorndkbridge/Android.bp
+@@ -15,14 +15,27 @@
+ cc_library_shared {
+     name: "libsensorndkbridge",
+     proprietary: true,
++    // a2corelte (SM-A260F) portu: Oreo kamera HAL'i
++    // (camera.universal7870_go.so -> libexynoscamera3.so -> libsensorlistener.so)
++    // bu kutuphaneyi DT_NEEDED olarak istiyor. Vendor process'leri izole
++    // linker namespace'inde calistigi icin /system/lib'i gormuyorlar:
++    //   E/vndksupport: dlopen failed: library "libsensorndkbridge.so" not found
++    // Vendor'a kurulumu device.mk PRODUCT_PACKAGES uzerinden tetiklenir.
++    //
++    // ALooperForCameraLegacy.cpp: Oreo'nun "kamera-ozel ALooper" API'sini
++    // (ALooper_forCamera / ALooper_pollOnce_camera / ALooper_release_forCamera)
++    // Android 10 genel API'siyle yeniden tanimlar. AOSP bu API'yi Android 10'da
++    // kaldirdigi icin libsensorlistener.so'nun UND sembolleri cozulmuyordu.
+     srcs: [
+         "ALooper.cpp",
++        "ALooperForCameraLegacy.cpp",
+         "ASensorEventQueue.cpp",
+         "ASensorManager.cpp",
+     ],
+     cflags: ["-Wall", "-Werror"],
+     shared_libs: [
+         "libbase",
++        "libcutils",
+         "libhidlbase",
+         "libhidltransport",
+         "libutils",
